@@ -113,8 +113,10 @@ func (r *Runner) Start() {
 
 // Stop runner
 func (r *Runner) Stop() {
-	r.cron.Stop()
 	log.Infof("stop runner")
+	ctx := r.cron.Stop()
+	<-ctx.Done()
+	log.Infof("stopped runner")
 }
 
 // Execute crontab command

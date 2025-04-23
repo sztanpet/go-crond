@@ -90,7 +90,13 @@ func findFilesInPaths(pathlist []string, callback func(os.FileInfo, string)) {
 			err := filepath.Walk(path, func(path string, f os.FileInfo, err error) error {
 				path, _ = filepath.Abs(path)
 
-				if f.IsDir() {
+				if err != nil {
+					log.Infof("Error %s for path %s", err, path)
+
+					return nil
+				}
+
+				if f == nil || f.IsDir() {
 					return nil
 				}
 

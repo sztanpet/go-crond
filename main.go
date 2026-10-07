@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/webdevops/go-crond/config"
 
@@ -24,6 +25,9 @@ const (
 	Name                = "go-crond"
 	Author              = "webdevops.io"
 	CRONTAB_TYPE_SYSTEM = ""
+
+	// time jobs get to exit after a forced shutdown forwarded SIGTERM to them
+	jobKillTimeout = 10 * time.Second
 )
 
 var (
@@ -437,7 +441,7 @@ func main() {
 
 		s := <-sigs
 		log.Infof("got signal: %v", s)
-		waitForRunner(runner.Stop(), sigs)
+		waitForRunner(runner, runner.Stop(), sigs)
 
 		if s != syscall.SIGHUP {
 			log.Infof("terminated")
@@ -447,22 +451,36 @@ func main() {
 	}
 }
 
-// wait for running jobs to finish, a termination signal while waiting
-// exits immediately, the running jobs are left to their fate
-func waitForRunner(ctx context.Context, sigs <-chan os.Signal) {
+// wait for running jobs to finish, a second termination signal forwards
+// SIGTERM to the jobs, if they do not exit in time they are killed
+func waitForRunner(runner *Runner, ctx context.Context, sigs <-chan os.Signal) {
 	log.Infof("waiting for running jobs to finish")
+	var killTimer <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			log.Infof("stopped runner")
+			if killTimer != nil {
+				os.Exit(1)
+			}
 			return
+		case <-killTimer:
+			log.Warnf("jobs did not exit within %v, killing them", jobKillTimeout)
+			runner.Signal(syscall.SIGKILL)
+			os.Exit(1)
 		case s := <-sigs:
 			if s == syscall.SIGHUP {
 				log.Infof("got signal: %v while waiting for jobs, ignoring", s)
 				continue
 			}
-			log.Warnf("got signal: %v while waiting for jobs, exiting now", s)
-			os.Exit(1)
+			if killTimer != nil {
+				log.Warnf("got signal: %v while terminating jobs, killing them", s)
+				runner.Signal(syscall.SIGKILL)
+				os.Exit(1)
+			}
+			log.Warnf("got signal: %v while waiting for jobs, sending SIGTERM to jobs", s)
+			runner.Signal(syscall.SIGTERM)
+			killTimer = time.After(jobKillTimeout)
 		}
 	}
 }

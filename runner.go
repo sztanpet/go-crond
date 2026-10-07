@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"os/user"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,6 +20,10 @@ import (
 type Runner struct {
 	cron     *cron.Cron
 	cronjobs map[cron.EntryID]*CrontabEntry
+
+	// process group ids of running jobs
+	pgidsMu sync.Mutex
+	pgids   map[int]struct{}
 }
 
 func NewRunner() *Runner {
@@ -29,6 +36,7 @@ func NewRunner() *Runner {
 			),
 		),
 		cronjobs: map[cron.EntryID]*CrontabEntry{},
+		pgids:    map[int]struct{}{},
 	}
 	return r
 }
@@ -119,6 +127,48 @@ func (r *Runner) Stop() context.Context {
 	return r.cron.Stop()
 }
 
+// Signal sends sig to the process groups of all running jobs
+func (r *Runner) Signal(sig syscall.Signal) {
+	r.pgidsMu.Lock()
+	defer r.pgidsMu.Unlock()
+	for pgid := range r.pgids {
+		if err := syscall.Kill(-pgid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			log.Errorf("cannot send %v to process group %d: %v", sig, pgid, err)
+		}
+	}
+}
+
+// start job in its own process group and track it, so signals meant for
+// go-crond (eg. ctrl-c in a terminal) do not reach it unless forwarded
+func (r *Runner) execJob(execCmd *exec.Cmd) ([]byte, error) {
+	if execCmd.SysProcAttr == nil {
+		execCmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	execCmd.SysProcAttr.Setpgid = true
+
+	var out bytes.Buffer
+	execCmd.Stdout = &out
+	execCmd.Stderr = &out
+
+	r.pgidsMu.Lock()
+	err := execCmd.Start()
+	if err == nil {
+		r.pgids[execCmd.Process.Pid] = struct{}{}
+	}
+	r.pgidsMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	err = execCmd.Wait()
+
+	r.pgidsMu.Lock()
+	delete(r.pgids, execCmd.Process.Pid)
+	r.pgidsMu.Unlock()
+
+	return out.Bytes(), err
+}
+
 // Execute crontab command
 func (r *Runner) cmdFunc(cronjob *CrontabEntry, cmdCallback func(*exec.Cmd) bool) func() {
 	cmdFunc := func() {
@@ -142,7 +192,7 @@ func (r *Runner) cmdFunc(cronjob *CrontabEntry, cmdCallback func(*exec.Cmd) bool
 		if cmdCallback(execCmd) {
 
 			// exec job
-			cmdStdout, err := execCmd.CombinedOutput()
+			cmdStdout, err := r.execJob(execCmd)
 
 			elapsed := time.Since(start)
 

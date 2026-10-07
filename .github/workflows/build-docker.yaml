@@ -18,11 +18,15 @@ jobs:
         with:
           swap-size-gb: 12
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
       - name: Run Golangci lint
-        uses: golangci/golangci-lint-action@v3
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
-          args: --print-resources-usage
 
   build:
     name: "build ${{ matrix.Dockerfile }}:${{ matrix.target }}"

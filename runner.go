@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"os/user"
@@ -111,12 +112,11 @@ func (r *Runner) Start() {
 	r.initAllCronEntryMetrics()
 }
 
-// Stop runner
-func (r *Runner) Stop() {
+// Stop runner, no new jobs are scheduled after this returns,
+// the returned context is done once all running jobs finished
+func (r *Runner) Stop() context.Context {
 	log.Infof("stop runner")
-	ctx := r.cron.Stop()
-	<-ctx.Done()
-	log.Infof("stopped runner")
+	return r.cron.Stop()
 }
 
 // Execute crontab command

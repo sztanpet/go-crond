@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -369,8 +370,8 @@ func createCronRunner(args []string) *Runner {
 func main() {
 	initArgParser()
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGHUP)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGHUP, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
 	log.Infof("starting %s version %s (%s; %s) ", Name, gitTag, gitCommit, runtime.Version())
 	log.Info(string(opts.GetJson()))
@@ -413,7 +414,6 @@ func main() {
 
 		// create new cron runner
 		runner := createCronRunner(opts.Args.Crontabs)
-		registerRunnerShutdown(runner)
 
 		// chdir to root to prevent relative path errors
 		err = os.Chdir(opts.Cron.WorkDir)
@@ -421,14 +421,49 @@ func main() {
 			log.Fatalf("cannot switch to path %s: %v", confDir, err)
 		}
 
+		// a termination signal may have arrived while draining the previous runner
+		select {
+		case s := <-sigs:
+			if s != syscall.SIGHUP {
+				log.Infof("got signal: %v", s)
+				log.Infof("terminated")
+				os.Exit(0)
+			}
+		default:
+		}
+
 		// start new cron runner
 		runner.Start()
 
-		// check if we received SIGHUP and start a new loop
-		s := <-c
-		log.Infof("Got signal: %v", s)
-		runner.Stop()
-		log.Infof("Reloading configuration")
+		s := <-sigs
+		log.Infof("got signal: %v", s)
+		waitForRunner(runner.Stop(), sigs)
+
+		if s != syscall.SIGHUP {
+			log.Infof("terminated")
+			os.Exit(0)
+		}
+		log.Infof("reloading configuration")
+	}
+}
+
+// wait for running jobs to finish, a termination signal while waiting
+// exits immediately, the running jobs are left to their fate
+func waitForRunner(ctx context.Context, sigs <-chan os.Signal) {
+	log.Infof("waiting for running jobs to finish")
+	for {
+		select {
+		case <-ctx.Done():
+			log.Infof("stopped runner")
+			return
+		case s := <-sigs:
+			if s == syscall.SIGHUP {
+				log.Infof("got signal: %v while waiting for jobs, ignoring", s)
+				continue
+			}
+			log.Warnf("got signal: %v while waiting for jobs, exiting now", s)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -464,18 +499,5 @@ func startHttpServer() {
 			}
 			log.Fatal(srv.ListenAndServe())
 		}
-	}()
-}
-
-func registerRunnerShutdown(runner *Runner) {
-	c := make(chan os.Signal, 2)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		s := <-c
-		log.Infof("got signal: %v", s)
-		runner.Stop()
-
-		log.Infof("terminated")
-		os.Exit(0)
 	}()
 }

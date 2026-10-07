@@ -27,7 +27,6 @@ vendor:
 build-all:
 	GOOS=linux   GOARCH=${GOARCH} CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o '$(PROJECT_NAME)' .
 	GOOS=darwin  GOARCH=${GOARCH} CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o '$(PROJECT_NAME).darwin' .
-	GOOS=windows GOARCH=${GOARCH} CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o '$(PROJECT_NAME).exe' .
 
 .PHONY: build
 build:
@@ -78,13 +77,6 @@ release-assets: clean-release-assets vendor $(RELEASE_ASSETS)
 clean-release-assets:
 	rm -rf ./release-assets
 	mkdir -p ./release-assets
-
-release-assets/windows.%: $(SOURCE)
-	echo 'build release-assets for windows/$(call word-dot,$*,2)'
-	GOOS=windows \
- 	GOARCH=$(call word-dot,$*,1) \
-	CGO_ENABLED=0 \
-	time go build -ldflags '$(LDFLAGS)' -o './release-assets/$(PROJECT_NAME).windows.$(call word-dot,$*,1).exe' .
 
 release-assets/%: $(SOURCE)
 	echo 'build release-assets for $(call word-dot,$*,1)/$(call word-dot,$*,2)'

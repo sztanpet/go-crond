@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"os/exec"
 	"os/user"
@@ -233,9 +234,7 @@ func (r *Runner) cronjobToPrometheusLabels(cronjob CrontabEntry, additionalLabel
 		"cronCommand": cronjob.Command,
 	}
 	for _, additionalLabelValue := range additionalLabels {
-		for labelName, labelValue := range additionalLabelValue {
-			labels[labelName] = labelValue
-		}
+		maps.Copy(labels, additionalLabelValue)
 	}
 	return
 }
